@@ -1,0 +1,34 @@
+boost.settings:
+  type: config_object
+  label: 'Boost settings'
+  mapping:
+    boost_expire_cron:
+      type: boolean
+      label: 'Enable expire on cron'
+    boost_lifetime_max:
+      type: integer
+      label: 'Cache file max lifetime'
+    boost_lazy_builder:
+      type: boolean
+      label: 'Enable ajax replace for lazy builder'
+    boost_pre_fetch_queue:
+      type: boolean
+      label: 'Enable pre fetch queue'
+    boost_pre_fetch_ip:
+      type: string
+      label: 'Ip for pre fetch queue'
+    boost_with_parameter:
+      type: boolean
+      label: 'Cache with query string'
+    boost_skip_domain:
+      type: sequence
+      label: 'Disable domains'
+      sequence:
+        type: string
+        label: 'Domain'
+    boost_skip_tags:
+      type: sequence
+      label: 'Disable tags'
+      sequence:
+        type: string
+        label: 'Domain'

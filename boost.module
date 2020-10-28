@@ -1,0 +1,462 @@
+<?php
+
+use Drupal\Core\Url;
+
+/**
+ * @file
+ * Contains boost.module
+ * 
+ * @todo , complete the nginx boost conf.
+ *       https://github.com/perusio/drupal-with-nginx/blob/D7/apps/drupal/drupal_boost.conf
+ * @todo , complete the example apache conf.
+ */
+
+/**
+ * Implements hook_cron().
+ * Performs periodic actions.
+ */
+function boost_cron() {
+  $boost_dir = boost_get_cache_dir();
+  
+  if(\Drupal::config('boost.settings')->get('boost_expire_cron')){
+    $count = _boost_rmdir($boost_dir, FALSE);
+    \Drupal::logger('boost')->notice(t('Expired %count stale files from static page cache.', array(
+      '%count' => $count
+    )));
+    boost_htaccess_cache_dir_put();
+  }
+  
+  //front page expire
+  /*
+  $domains = boost_get_cache_domains_from_dir();
+  $lifetime = \Drupal::config('boost.settings')->get('boost_lifetime_max');
+  $queue_enabled = \Drupal::config('boost.settings')->get('boost_pre_fetch_queue');
+  
+  foreach ($domains as $domain){
+    $front_file = "{$boost_dir}/{$domain}/index.html";
+    if(file_exists($front_file)){
+      $age = boost_file_get_age($front_file);
+      if ($age > $lifetime) {
+        unlink($front_file);
+        $data = "http://{$domain}";
+        _boost_fetch_url($data);
+      }
+    }
+  }
+  */
+}
+
+/**
+ * Implements hook_block_alter().
+ */
+function boost_block_alter(&$definitions) {
+  foreach ($definitions as $key => $definition) {
+    if ($definitions[$key]['class'] == 'Drupal\views\Plugin\Block\ViewsBlock') {
+      $definitions[$key]['class'] = 'Drupal\boost\Plugin\Block\ViewsBlock';
+    }
+  }
+}
+function boost_get_cache_dir($real_path = TRUE){
+  $boost_dir = file_default_scheme() . '://boost';
+  if($real_path){
+    $boost_dir = drupal_realpath($boost_dir);
+  }
+  return $boost_dir;
+}
+function boost_get_cache_domains_from_dir(){
+  $boost_dir = boost_get_cache_dir();
+  $objects = scandir($boost_dir);
+  $domains = [];
+  foreach($objects as $object) {
+    if ($object == "." || $object == "..") {
+      continue;
+    }
+    $file = $boost_dir . "/" . $object;
+    if (is_dir($file)) {
+      $domains[] = $object;
+    }
+  }
+  return $domains;
+}
+/**
+ * Recursive version of rmdir(); use with extreme caution.
+ * Function also checks file age and only removes expired files.
+ * 
+ * @param $dir The
+ *          top-level directory that will be recursively removed.
+ * @param $flush Instead
+ *          of removing expired cached files, remove all files.
+ */
+function _boost_rmdir($dir, $flush = TRUE) {
+  $lifetime = \Drupal::config('boost.settings')->get('boost_lifetime_max');
+  static $counter = 0;
+  if (is_dir($dir) == FALSE) {
+    return FALSE;
+  }
+  
+  if (!boost_in_cache_dir($dir)) {
+    return FALSE;
+  }
+  
+  $objects = scandir($dir);
+  $empty_dir = TRUE;
+  foreach($objects as $object) {
+    if ($object == "." || $object == "..") {
+      continue;
+    }
+    if ($object == ".htaccess") {
+      $empty_dir = FALSE;
+      continue;
+    }
+    
+    $file = $dir . "/" . $object;
+    if (is_dir($file)) {
+      _boost_rmdir($file, $flush);
+    } elseif ($flush) {
+      unlink($file);
+      $counter++;
+    } else {
+      // Need to handle gzipped files.
+      // Nice if it supported multi level cache expiration per content type.
+      $ext = substr(strrchr($file, '.'), 1);
+      $age = boost_file_get_age($file);
+      if ($age > $lifetime) {
+        unlink($file);
+        $counter++;
+      } else {
+        $empty_dir = FALSE;
+      }
+    }
+  }
+  if ($empty_dir && is_dir($dir)) {
+    // #1138630 @ error suppression used due to rmdir being a race condition.
+    @rmdir($dir);
+  }
+  return $counter;
+}
+
+/**
+ * Verify that the operation is going to operate in the cache dir.
+ * 
+ * @param $file relative
+ *          directory or file.
+ */
+function boost_in_cache_dir($file) {
+  
+  $good = TRUE;
+  $real_file = realpath($file);
+  $cache_dir = boost_get_cache_dir();;
+  $real_cache_dir = realpath($cache_dir);
+  
+  // Only operate in the cache dir.
+  // Check the real path.
+  if (strpos($file, $cache_dir) !== 0 || ($real_file && $real_cache_dir && strpos($real_file, $real_cache_dir) !== 0)) {
+    $good = FALSE;
+  }
+  
+  // Send error to log.
+  if (!$good) {
+    \Drupal::logger('boost')->error(t('An operation outside of the cache directory was attempted on your system. %file or %real_file is outside the cache directory %cache or %real_cache.', array(
+      '%file' => $file,
+      '%real_file' => $real_file,
+      '%cache' => $cache_dir,
+      '%real_cache' => $real_cache_dir
+    )));
+  }
+  
+  return $good;
+}
+/**
+ * Returns the age of a cached file, measured in seconds since it was last
+ * updated.
+ *
+ * @param $filename
+ *   Name of cached file
+ * @return int
+ */
+function boost_file_get_age($filename) {
+  return REQUEST_TIME - filemtime($filename);
+}
+
+/**
+ * Overwrite old htaccess rules with new ones.
+ */
+function boost_htaccess_cache_dir_put() {
+  $boost_dir = boost_get_cache_dir(false);
+  if (!file_exists($boost_dir)) {
+    drupal_mkdir($boost_dir, 0775, TRUE);
+  }
+  file_put_contents($boost_dir . '/.htaccess', boost_htaccess_content_generate());
+}
+
+/**
+ * Generate htaccess rules for the cache directory.
+ */
+function boost_htaccess_content_generate() {
+  $string = '';
+  $string .= "<FilesMatch \"\.html$\">\n";
+  $string .= "  <IfModule mod_expires.c>\n";
+  $string .= "    ExpiresDefault A5\n";
+  $string .= "  </IfModule>\n";
+  $string .= "  <IfModule mod_headers.c>\n";
+  $string .= "    Header set Expires \"Sun, 19 Nov 1978 05:00:00 GMT\"\n";
+  $string .= "    Header unset Last-Modified\n";
+  $string .= "    Header append Vary Accept-Encoding\n";
+  $string .= "    Header set Cache-Control \"no-store, no-cache, must-revalidate, post-check=0, pre-check=0\"\n";
+  $string .= "    Header set X-Boost-Cache \"FULL\"\n";
+  $string .= "  </IfModule>\n";
+  $string .= "</FilesMatch>\n";
+  
+  // Make sure files can not execute in the cache dir.
+  $string .= "\n";
+  $string .= "SetHandler Drupal_Security_Do_Not_Remove_See_SA_2006_006\n";
+  $string .= "Options None\n";
+  $string .= "Options +FollowSymLinks\n";
+  $string .= "\n";
+  
+  return $string;
+}
+/**
+ * Implements hook_preprocess_page().
+ * 
+ * @param unknown $variables
+ */
+function boost_preprocess_page(&$variables){
+  if(\Drupal::currentUser()->isAuthenticated()){
+    user_cookie_save(['DRUPAL_UID' => \Drupal::currentUser()->id()]);
+  }else{
+    user_cookie_delete('DRUPAL_UID');
+  }
+}
+/**
+ * Implements hook_user_logout().
+ * 
+ * @param unknown $account
+ */
+function boost_user_logout($account) {
+  user_cookie_delete('DRUPAL_UID');
+}
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ * 
+ * @param Drupal\Core\Entity\EntityInterface $entity
+ */
+function boost_node_insert(Drupal\Core\Entity\EntityInterface $entity) {
+  boost_node_update($entity);
+}
+/**
+ * Implements hook_ENTITY_TYPE_update().
+ * 
+ * @param Drupal\Core\Entity\EntityInterface $entity
+ */
+function boost_node_update(Drupal\Core\Entity\EntityInterface $entity) {
+  $url = "/node/" . $entity->id();
+  $urls = [
+    "/",
+    "/node/" . $entity->id(),
+    $entity->toUrl()->toString(),
+  ];
+  if($alias = \Drupal::service('path.alias_manager')->getAliasByPath($url)){
+    $urls[] = $alias;
+  }
+  $queue_enabled = \Drupal::config('boost.settings')->get('boost_pre_fetch_queue');
+  $boost_dir = boost_get_cache_dir();
+  $cache_domains = boost_get_cache_domains_from_dir();
+  
+  if($entity->isPublished()){
+    if($queue_enabled){
+      /** @var QueueFactory $queue_factory */
+      $queue_factory = \Drupal::service('queue');
+      /** @var QueueInterface $queue */
+      $queue = $queue_factory->get('boost_url_fetch_queue');
+      
+      foreach ($urls as $item){
+        $u = ($item == "/" ? "/index":$item);
+        foreach ($cache_domains as $domain){
+          $cache_file = "{$boost_dir}/{$domain}{$u}.html";
+          
+          $queue_data = new \stdClass();
+          $queue_data->file = $cache_file;
+          $queue_data->url = "http://{$domain}{$item}";
+          $queue->createItem($queue_data);
+        }
+      }
+    }
+  }
+  if(!$entity->isPublished() || !empty($entity->_deleted->value)){
+    foreach ($urls as $item){
+      if($item == '/' && $queue_enabled){
+        /** @var QueueFactory $queue_factory */
+        $queue_factory = \Drupal::service('queue');
+        /** @var QueueInterface $queue */
+        $queue = $queue_factory->get('boost_url_fetch_queue');
+        
+        foreach ($cache_domains as $domain){
+          $cache_file = "{$boost_dir}/{$domain}/index.html";
+          
+          $queue_data = new \stdClass();
+          $queue_data->file = $cache_file;
+          $queue_data->url = "http://{$domain}";
+          $queue->createItem($queue_data);
+        }
+      }
+      foreach ($cache_domains as $domain){
+        $cache_file = "{$boost_dir}/{$domain}{$item}.html";
+        if(file_exists($cache_file)){
+          unlink($cache_file);
+        }
+      }
+    }
+  }
+}
+/**
+ * Implements hook_ENTITY_TYPE_insert().
+ *
+ * @param Drupal\Core\Entity\EntityInterface $entity
+ */
+function boost_taxonomy_term_insert(Drupal\Core\Entity\EntityInterface $entity) {
+  boost_taxonomy_term_update($entity);
+}
+/**
+ * Implements hook_ENTITY_TYPE_update().
+ *
+ * @param Drupal\Core\Entity\EntityInterface $entity
+ */
+function boost_taxonomy_term_update(Drupal\Core\Entity\EntityInterface $entity) {
+  $url = "/taxonomy/term/" . $entity->id();
+  $urls = [
+    "/taxonomy/term/" . $entity->id(),
+    $entity->toUrl()->toString(),
+  ];
+  if($alias = \Drupal::service('path.alias_manager')->getAliasByPath($url)){
+    $urls[] = $alias;
+  }
+  $queue_enabled = \Drupal::config('boost.settings')->get('boost_pre_fetch_queue');
+  $boost_dir = boost_get_cache_dir();
+  $cache_domains = boost_get_cache_domains_from_dir();
+
+  if($queue_enabled){
+    /** @var QueueFactory $queue_factory */
+    $queue_factory = \Drupal::service('queue');
+    /** @var QueueInterface $queue */
+    $queue = $queue_factory->get('boost_url_fetch_queue');
+    foreach ($urls as $item){
+      $u = ($item == "/" ? "/index":$item);
+      foreach ($cache_domains as $domain){
+        $cache_file = "{$boost_dir}/{$domain}{$u}.html";
+        $queue_data = new \stdClass();
+        $queue_data->file = $cache_file;
+        $queue_data->url = "http://{$domain}{$item}";
+        $queue->createItem($queue_data);
+      }
+    }
+  }
+}
+/**
+ * 
+ * @param unknown $url
+ * @param string $tag
+ * @param number $count
+ */
+function _boost_fetch_url($url, $tag = '', $count = 1){
+  if(empty($url)) return;
+  try {
+    $start = microtime(true);
+    $headers = ['X-BOOST-FETCH' => '1'];
+    $ip = \Drupal::config('boost.settings')->get('boost_pre_fetch_ip');
+    if(!empty($ip) && preg_match('/^(https?:\/\/)([^\/:]+)/i',$url,$match)){
+      $host = $match[2];
+      $url = preg_replace('/^(https?:\/\/)([^\/:]+)/i','${1}' . $ip, $url);
+      $headers['Host'] = $host;
+    }
+    $response = \Drupal::httpClient()->get($url,['verify' => false,'headers' => $headers]);
+    $end = microtime(true);
+    $spend = round($end - $start,3);
+    if(function_exists('drush_log') && $response){
+      drush_log("{$tag}({$count}) - Fetch result {$response->getStatusCode()} : {$url} {$spend}","ok");
+    }
+  } catch (\Exception $e) {
+    if(function_exists('drush_log')){
+      drush_log("{$tag}({$count}) - Fetch error : {$url} {$e->getMessage()}","error");
+    }
+  }
+}
+/**
+ * 
+ * @param unknown $tag
+ * @param string $queue
+ * @param string $fetch
+ */
+function boost_invalidate_cache_tag($tag, $queue = false, $fetch = false){
+  $state_key = "boost.fetch_queue_tag.{$tag}";
+  if($queue){
+    if(empty(\Drupal::state()->get($state_key,0))){
+      /** @var QueueFactory $queue_factory */
+      $queue_factory = \Drupal::service('queue');
+      /** @var QueueInterface $queue */
+      $queue = $queue_factory->get('boost_cache_fetch_queue');
+      $data = $tag;
+      // Add deploy to queue.
+      $queue->createItem($data);
+      \Drupal::state()->set($state_key, 1);
+    }
+  }else{
+    try {
+      \Drupal::state()->set($state_key, 0);
+      if(function_exists('drush_log')){
+        drush_log("Process tag : {$tag}","ok");
+      }
+      if(strpos($tag,'http://') === 0){
+        _boost_fetch_url($tag);
+      }else{
+        $tags_to_exclude = \Drupal::config('boost.settings')->get('boost_skip_tags')?:[];
+        if(in_array($tag,$tags_to_exclude)){
+          if(function_exists('drush_log')){
+            drush_log("Skip tag : {$tag}","ok");
+          }
+          return;
+        }
+        $result = \Drupal::database()->query('SELECT cid, data FROM {cache_boost} WHERE instr(tags ,\'' . $tag . '\') > 0');
+        $count = 1;
+        foreach ($result as $item) {
+          
+          $file_uri = $item->data;
+          
+          if(!empty($fetch)){
+            $cid = $item->cid;
+            $parts = explode(':',$cid);
+            if(!empty($parts) && end($parts) == 'html'){
+              array_pop($parts);
+              $data = implode(':',$parts);
+              _boost_fetch_url($data,$tag,$count);
+            }
+          }else{
+            if(!empty($file_uri) && file_exists($file_uri)){
+              file_unmanaged_delete($file_uri);
+            }
+          }
+          $count++;
+        }
+      }
+    }
+    catch (\Exception $e) {
+      // Nothing to do.
+    }
+  }
+  
+}
+/**
+ * Implements hook_views_pre_render().
+ */
+function boost_views_pre_render(\Drupal\views\ViewExecutable $view) {
+  if($view->hasUrl() && $view->getDisplay()->getBaseId() == 'page' && $view->getStyle()->getBaseId() == 'calendar'){
+    if(empty($view->attachment_before)){
+      $view->attachment_before = [];
+    }
+    $view->attachment_before += [
+      '#cache' => [
+        'tags' => ['none_boost_cache']
+      ]
+    ];
+  }
+}

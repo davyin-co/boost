@@ -1,0 +1,11 @@
+boost:
+  version: VERSION
+  js:
+    js/boost_placeholder.js: {}
+  drupalSettings:
+    boostPlaceholderIds: []
+  dependencies:
+    - core/jquery
+    - core/jquery.once
+    - core/drupal.ajax
+    - core/drupalSettings

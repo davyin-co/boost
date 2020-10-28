@@ -1,0 +1,35 @@
+services:
+  boost.cache_file:
+    class: Drupal\boost\BoostCacheFile
+    arguments: ['@file_system']
+  boost_cache_request_policy:
+    class: Drupal\boost\PageCache\DefaultRequestPolicy
+    arguments: ['@session_configuration']
+    tags:
+      - { name: service_collector, tag: boost_cache_request_policy, call: addPolicy}
+  boost.path_filter_response_policy:
+    class: Drupal\boost\PageCache\ResponsePolicy\BoostPathFilter
+    tags:
+      - { name: page_cache_response_policy }
+  http_middleware.boost_cache:
+    class: Drupal\boost\StackMiddleware\BoostCache
+    arguments: ['@cache.boost', '@boost_cache_request_policy', '@page_cache_response_policy', '@boost.cache_file','@html_response.attachments_processor']
+    tags:
+      - { name: http_middleware, priority: 210, responder: true }
+  cache.backend.boost:
+    class: Drupal\boost\Cache\BoostDatabaseBackendFactory
+    arguments: ['@database', '@cache_tags.invalidator.checksum']
+  cache.boost:
+    class: Drupal\Core\Cache\CacheBackendInterface
+    tags:
+      - { name: cache.bin, default_backend: cache.backend.boost}
+    factory: cache_factory:get
+    arguments: [boost]
+  placeholder_strategy.boost:
+    class: Drupal\boost\Render\Placeholder\BoostStrategy
+    arguments: ['@session_configuration', '@request_stack', '@current_route_match', '@boost_cache_request_policy']
+    tags:
+      - { name: placeholder_strategy, priority: 0 }
+  boost.lazy_builder:
+    class: Drupal\boost\BoostLazyBuilder
+    arguments: ['@entity_type.manager', '@views.executable']

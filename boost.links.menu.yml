@@ -1,0 +1,5 @@
+boost.admin_settings:
+  title: 'Boost'
+  route_name: boost.admin_settings
+  parent: system.admin_config_development
+

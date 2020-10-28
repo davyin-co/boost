@@ -1,0 +1,16 @@
+{
+    "name": "davyin/boost",
+    "description": "Provides a mechanism for modules to automatically generate aliases for the content they manage.",
+    "type": "drupal-module",
+    "license": "GPL-2.0-or-later",
+    "homepage": "https://github.com/davyin-co/boost",
+    "support": {
+        "issues": "https://github.com/davyin-co/boost/issues",
+        "documentation": "https://www.drupal.org/docs/8/modules/boost",
+        "source": "https://github.com/davyin-co/boost"
+    },
+    "require": {
+        "drupal/core": "^8.6"
+    }
+}
+

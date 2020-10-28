@@ -1,0 +1,8 @@
+boost_expire_cron: 0
+boost_lifetime_max: 86400
+boost_lazy_builder: 1
+boost_pre_fetch_queue: 0
+boost_pre_fetch_ip: ''
+boost_with_parameter: 0
+boost_skip_domain: {}
+boost_skip_tags: {}

@@ -1,0 +1,17 @@
+boost.admin_settings:
+  path: '/admin/config/development/boost'
+  defaults:
+    _form: '\Drupal\boost\Form\BoostSettingsForm'
+    _title: 'Boost settings'
+  requirements:
+    _permission: 'access boost settings'
+boost.placeholder_replace:
+  path: '/boost/replace'
+  defaults:
+    _controller: '\Drupal\boost\Controller\BoostController:placeHolderReplace'
+    _title: 'Boost Placeholder Replace'
+  methods: [POST]
+  options:
+    no_cache: TRUE
+  requirements:
+    _access: 'TRUE'
