@@ -1,5 +1,5 @@
 {
-    "name": "davyin/boost",
+    "name": "dyniva/boost",
     "description": "Provides a mechanism for modules to automatically generate aliases for the content they manage.",
     "type": "drupal-module",
     "license": "GPL-2.0-or-later",
@@ -11,6 +11,15 @@
     },
     "require": {
         "drupal/core": "^8.6"
-    }
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-8.x-1.x": "1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "dev",
+    "prefer-stable" : true
 }
-
