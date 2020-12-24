@@ -10,7 +10,7 @@
         "source": "https://github.com/davyin-co/boost"
     },
     "require": {
-        "drupal/core": "^8.6"
+        "drupal/core": "^8.6 || ^9"
     },
     "extra": {
         "branch-alias": {
